@@ -162,6 +162,78 @@ template $SwayNotificationCenterNotification: Adw.Bin {
             }
           }
 
+          Box hc_enrichment_box {
+            orientation: vertical;
+            spacing: 6;
+            visible: false;
+
+            styles [
+              "hc-enrichment",
+            ]
+
+            Label hc_context_label {
+              wrap: true;
+              wrap-mode: word_char;
+              xalign: 0;
+              visible: false;
+
+              styles [
+                "hc-context-note",
+              ]
+            }
+
+            Entry hc_draft_entry {
+              input-purpose: free_form;
+              input-hints: spellcheck | emoji;
+              hexpand: true;
+              visible: false;
+
+              styles [
+                "hc-draft-entry",
+              ]
+            }
+
+            Box hc_actions_box {
+              orientation: horizontal;
+              spacing: 6;
+              visible: false;
+
+              styles [
+                "hc-draft-actions",
+              ]
+
+              Button hc_copy_open_button {
+                label: "Copy & Open Chat";
+                can-focus: false;
+                visible: false;
+
+                styles [
+                  "hc-draft-action",
+                ]
+              }
+
+              Button hc_copy_button {
+                label: "Copy";
+                can-focus: false;
+                visible: false;
+
+                styles [
+                  "hc-draft-action",
+                ]
+              }
+
+              Button hc_edit_button {
+                label: "Edit";
+                can-focus: false;
+                visible: false;
+
+                styles [
+                  "hc-draft-action",
+                ]
+              }
+            }
+          }
+
           FlowBox alt_actions_box {
             orientation: horizontal;
             homogeneous: true;

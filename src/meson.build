@@ -63,6 +63,7 @@ app_sources = [
   'configModel/configModel.vala',
   'swayncDaemon/swayncDaemon.vala',
   'notiDaemon/notiDaemon.vala',
+  'notiDaemon/hcHold.vala',
   'notiModel/notiModel.vala',
   'notificationWindow/notificationWindow.vala',
   'dismissableWidget/dismissableWidget.vala',

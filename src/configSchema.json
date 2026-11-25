@@ -214,6 +214,54 @@
       "description": "Sends a notification if a script fails to run",
       "default": true
     },
+    "script-continue-on-match": {
+      "type": "boolean",
+      "description": "Continue running subsequent matching scripts instead of stopping at the first matching script",
+      "default": false
+    },
+    "hc-hold-enabled": {
+      "type": "boolean",
+      "description": "Enable hey-computer hold-and-enrich pipeline for incoming notifications",
+      "default": false
+    },
+    "hc-hold-max-seconds": {
+      "type": "integer",
+      "description": "Maximum duration (in seconds, clamped 1..300) to hold a notification waiting for hey-computer before failing open",
+      "default": 60,
+      "minimum": 1,
+      "maximum": 300
+    },
+    "hc-hold-socket": {
+      "type": "string",
+      "description": "Override UNIX socket path for hey-computer (empty resolves $XDG_RUNTIME_DIR/hey-computer.sock)",
+      "default": ""
+    },
+    "hc-hold-apps": {
+      "type": "array",
+      "description": "Case-insensitive regexes matched against app_name or desktop_entry to hold; when empty and hc-hold-enabled is true, holds all non-excluded Normal-urgency notifications",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "hc-hold-exclude-apps": {
+      "type": "array",
+      "description": "Case-insensitive regexes matched against app_name or desktop_entry to exclude from holding",
+      "default": [],
+      "items": {
+        "type": "string"
+      }
+    },
+    "hc-hold-low-urgency": {
+      "type": "boolean",
+      "description": "Whether to also hold low-urgency notifications",
+      "default": false
+    },
+    "hc-hold-critical-urgency": {
+      "type": "boolean",
+      "description": "Whether to also hold critical-urgency notifications",
+      "default": false
+    },
     "scripts": {
       "type": "object",
       "description": "Which scripts to check and potentially run for every notification. If the notification doesn't include one of the properties, that property will be ignored. All properties (except for exec) use regex. If all properties match the given notification, the script will be run. Only the first matching script will be run.",
@@ -270,6 +318,11 @@
               "description": "Whether to run the script on an action being activated, or when the notification is received.",
               "enum": ["action", "receive"],
               "default": "receive"
+            },
+            "skip-on-dnd": {
+              "type": "boolean",
+              "description": "Skip running this script while Do Not Disturb or an inhibitor is active (unless SWAYNC_BYPASS_DND is set).",
+              "default": false
             }
           }
         }

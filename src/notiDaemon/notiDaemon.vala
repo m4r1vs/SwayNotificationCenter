@@ -8,6 +8,7 @@ namespace SwayNotificationCenter {
         private HashTable<string, uint32> synchronous_ids =
             new HashTable<string, uint32> (str_hash, str_equal);
         private Gee.HashSet<uint32> notification_ids = new Gee.HashSet<uint32> ();
+        private HcHoldManager hc_hold;
 
         /** Do Not Disturb state */
         internal bool dnd { get; set; default = false; }
@@ -15,6 +16,7 @@ namespace SwayNotificationCenter {
         internal signal void on_dnd_toggle (bool dnd);
 
         public NotiDaemon () {
+            this.hc_hold = new HcHoldManager (this);
             this.notify["dnd"].connect (() => on_dnd_toggle (dnd));
 
             // Init dnd from gsettings
@@ -209,6 +211,32 @@ namespace SwayNotificationCenter {
                 synchronous_ids.set (param.synchronous, id);
             }
 
+            // If this replaces a notification that is still being held, cancel
+            // the stale hold (closing its socket so hey-computer aborts the stale
+            // turn) and carry forward any earlier displayed ID it was replacing.
+            if (notification_id_to_replace > 0) {
+                uint32 carried_replace_id = 0;
+                if (hc_hold.cancel_held (notification_id_to_replace, out carried_replace_id)) {
+                    notification_id_to_replace = carried_replace_id;
+                }
+            }
+
+            if (hc_hold.should_hold (param)) {
+                debug ("Holding Notification for hey-computer: ID:%u\n", param.applied_id);
+                hc_hold.hold (param, notification_id_to_replace);
+                return id;
+            }
+
+            deliver_notification (param, null, notification_id_to_replace);
+            return id;
+        }
+
+        internal void deliver_notification (NotifyParams param,
+                                            HcEnrichment ?enrichment = null,
+                                            uint32 notification_id_to_replace = 0) {
+            param.hc_enrichment = enrichment;
+            uint32 id = param.applied_id;
+
             // Don't show the floating notification if disabled and not transient
             string[] hide_floating_notification_reasons = {};
             if (param.status_state != NotificationStatusEnum.ENABLED
@@ -292,17 +320,16 @@ namespace SwayNotificationCenter {
 #if WANT_SCRIPTING
             if (param.swaync_no_script) {
                 debug ("Skipped scripts for this notification\n");
-                return id;
+                return;
             }
-            // Run the first script if notification meets requirements
+            // Run matching scripts if notification meets requirements
             OrderedHashTable<Script> scripts = ConfigModel.instance.scripts;
             if (scripts.length == 0) {
-                return id;
+                return;
             }
             this.run_scripts (param, ScriptRunOnType.RECEIVE);
 #endif
             debug ("\n");
-            return id;
         }
 
         /**
@@ -325,6 +352,11 @@ namespace SwayNotificationCenter {
                     continue;
                 }
                 if (script.run_on != run_on) {
+                    continue;
+                }
+                if (script.skip_on_dnd && !param.swaync_bypass_dnd
+                    && (dnd || swaync_daemon.inhibited)) {
+                    debug ("Skipped script \"%s\" due to DND/inhibited state\n", key);
                     continue;
                 }
 
@@ -366,7 +398,9 @@ namespace SwayNotificationCenter {
                         }
                     }
                 });
-                break;
+                if (!ConfigModel.instance.script_continue_on_match) {
+                    break;
+                }
             }
 #endif
         }
@@ -384,6 +418,12 @@ namespace SwayNotificationCenter {
          */
         [DBus (name = "CloseNotification")]
         public void close_notification (uint32 id) throws DBusError, IOError {
+            uint32 carried_replace_id = 0;
+            if (hc_hold.cancel_held (id, out carried_replace_id)) {
+                debug ("Cancelled held notification ID:%u via CloseNotification", id);
+                NotificationClosed (id, ClosedReasons.CLOSED_BY_CLOSENOTIFICATION);
+                return;
+            }
             request_dismiss_notification_id (id, ClosedReasons.CLOSED_BY_CLOSENOTIFICATION, false);
         }
 

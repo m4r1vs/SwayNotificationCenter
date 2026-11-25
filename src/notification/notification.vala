@@ -52,6 +52,24 @@ namespace SwayNotificationCenter {
         [GtkChild]
         unowned Gtk.Button inline_reply_button;
 
+        // hey-computer Hold-and-Enrich drawer (strictly read-only for messaging apps)
+        [GtkChild]
+        unowned Gtk.Box hc_enrichment_box;
+        [GtkChild]
+        unowned Gtk.Label hc_context_label;
+        [GtkChild]
+        unowned Gtk.Entry hc_draft_entry;
+        [GtkChild]
+        unowned Gtk.Box hc_actions_box;
+        [GtkChild]
+        unowned Gtk.Button hc_copy_open_button;
+        [GtkChild]
+        unowned Gtk.Button hc_copy_button;
+        [GtkChild]
+        unowned Gtk.Button hc_edit_button;
+
+        private uint hc_copied_reset_id = 0;
+
         private bool default_action_down = false;
         private bool default_action_in = false;
 
@@ -85,6 +103,11 @@ namespace SwayNotificationCenter {
         public int number_of_body_lines { get; construct; default = 10; }
 
         public bool has_inline_reply { get; private set; default = false; }
+        public bool has_hc_draft_entry { get; private set; default = false; }
+
+        public bool needs_keyboard_input () {
+            return has_inline_reply || has_hc_draft_entry;
+        }
 
         private static Regex code_regex;
 
@@ -226,13 +249,81 @@ namespace SwayNotificationCenter {
             });
             motion_controller.leave.connect ((controller) => {
                 close_button.set_reveal (false);
-                add_notification_timeout ();
+                if (!hc_draft_entry.has_focus) {
+                    add_notification_timeout ();
+                }
             });
 
 
             // Remove notification when it has been swiped
             dismissible_widget.dismissed.connect (() => {
                 request_dismiss_notification (ClosedReasons.DISMISSED, true);
+            });
+
+            // Pause expiration while the user edits the hey-computer draft entry.
+            // Never connect Return or any draft button to NotificationReplied
+            // so WhatsApp/Signal stay strictly read-only.
+            hc_draft_entry.notify["has-focus"].connect (() => {
+                if (hc_draft_entry.has_focus) {
+                    remove_noti_timeout ();
+                } else {
+                    add_notification_timeout ();
+                }
+            });
+
+            hc_copy_open_button.clicked.connect (() => {
+                string draft = hc_draft_entry.get_text ();
+                if (draft.length > 0) {
+                    get_clipboard ().set_text (draft);
+                }
+                unowned HcEnrichment ?enrichment = param.hc_enrichment;
+                if (enrichment != null
+                    && enrichment.token.length > 0
+                    && !enrichment.token_claimed) {
+                    enrichment.token_claimed = true;
+                    HcHoldManager.send_draft_resume (enrichment.token, "copy");
+                }
+                click_default_action ();
+            });
+
+            hc_copy_button.clicked.connect (() => {
+                string draft = hc_draft_entry.get_text ();
+                if (draft.length > 0) {
+                    get_clipboard ().set_text (draft);
+                }
+                unowned HcEnrichment ?enrichment = param.hc_enrichment;
+                if (enrichment != null
+                    && enrichment.token.length > 0
+                    && !enrichment.token_claimed) {
+                    enrichment.token_claimed = true;
+                    HcHoldManager.send_draft_resume (enrichment.token, "copy");
+                }
+                hc_copy_button.set_label ("Copied");
+                clear_hc_copied_timer ();
+                hc_copied_reset_id = Timeout.add (1500, () => {
+                    hc_copied_reset_id = 0;
+                    hc_copy_button.set_label ("Copy");
+                    return Source.REMOVE;
+                });
+            });
+
+            hc_edit_button.clicked.connect (() => {
+                string draft = hc_draft_entry.get_text ();
+                if (draft.length > 0) {
+                    get_clipboard ().set_text (draft);
+                }
+                unowned HcEnrichment ?enrichment = param.hc_enrichment;
+                if (enrichment != null && enrichment.token.length > 0) {
+                    enrichment.token_claimed = true;
+                    HcHoldManager.send_draft_resume (enrichment.token, "edit");
+                }
+                if (ConfigModel.instance.hide_on_action) {
+                    try {
+                        swaync_daemon.set_visibility (false);
+                    } catch (Error e) {
+                        critical ("Error: %s\n", e.message);
+                    }
+                }
             });
 
             Gtk.EventControllerKey reply_key_controller = new Gtk.EventControllerKey ();
@@ -291,6 +382,7 @@ namespace SwayNotificationCenter {
             set_body ();
             set_icon ();
             set_inline_reply ();
+            set_hc_enrichment ();
             set_actions ();
             set_style_urgency ();
 
@@ -307,7 +399,11 @@ namespace SwayNotificationCenter {
         private void set_body () {
             string text = param.body ?? "";
 
-            this.body.set_lines (this.number_of_body_lines);
+            if (param.hc_enrichment != null) {
+                this.body.set_lines (4);
+            } else {
+                this.body.set_lines (this.number_of_body_lines);
+            }
 
             // Reset state
             body_image.hide ();
@@ -506,6 +602,7 @@ namespace SwayNotificationCenter {
 
         private void set_inline_reply () {
             // Reset state
+            has_inline_reply = false;
             inline_reply_box.hide ();
             // Only show inline replies in popup notifications if the compositor
             // supports ON_DEMAND layer shell keyboard interactivity
@@ -537,6 +634,71 @@ namespace SwayNotificationCenter {
                 null);
 
             inline_reply_button.set_label (param.inline_reply.text ?? "Reply");
+        }
+
+        private void clear_hc_copied_timer () {
+            if (hc_copied_reset_id > 0) {
+                Source.remove (hc_copied_reset_id);
+                hc_copied_reset_id = 0;
+            }
+        }
+
+        private void set_hc_enrichment () {
+            clear_hc_copied_timer ();
+            hc_copy_button.set_label ("Copy");
+            has_hc_draft_entry = false;
+            hc_enrichment_box.hide ();
+            hc_context_label.hide ();
+            hc_draft_entry.hide ();
+            hc_actions_box.hide ();
+            hc_copy_open_button.hide ();
+            hc_copy_button.hide ();
+            hc_edit_button.hide ();
+
+            unowned HcEnrichment ?enrichment = param.hc_enrichment;
+            if (enrichment == null) {
+                return;
+            }
+
+            string context_note = enrichment.context_note.strip ();
+            string draft_text = enrichment.draft_text;
+            bool has_context = context_note.length > 0;
+            bool has_draft = draft_text.strip ().length > 0;
+            bool has_edit = enrichment.turn_id > 0;
+            bool has_copy_open = has_draft && param.default_action != null;
+
+            if (!has_context && !has_draft && !has_edit) {
+                return;
+            }
+
+            if (has_context) {
+                hc_context_label.set_text ("✦ " + context_note);
+                hc_context_label.show ();
+            }
+
+            if (has_draft) {
+                hc_draft_entry.set_text (draft_text);
+                hc_draft_entry.show ();
+                bool can_focus_entry = !(ConfigModel.instance.layer_shell
+                    && !app.has_layer_on_demand
+                    && notification_type == NotificationType.FLOATING);
+                has_hc_draft_entry = can_focus_entry;
+            }
+
+            if (has_copy_open) {
+                hc_copy_open_button.show ();
+            }
+            if (has_draft) {
+                hc_copy_button.show ();
+            }
+            if (has_edit) {
+                hc_edit_button.show ();
+            }
+            if (has_copy_open || has_draft || has_edit) {
+                hc_actions_box.show ();
+            }
+
+            hc_enrichment_box.show ();
         }
 
         private void set_actions () {
@@ -645,6 +807,7 @@ namespace SwayNotificationCenter {
         // Sends a request to dismiss the notification, doesn't remove self
         public void request_dismiss_notification (ClosedReasons reason, bool by_swipe) {
             remove_noti_timeout ();
+            clear_hc_copied_timer ();
             lock (dismissed) {
                 if (dismissed) {
                     debug ("Trying to dismiss already dismissed notification. Skipping...");
@@ -652,12 +815,22 @@ namespace SwayNotificationCenter {
                 }
                 dismissed_by_swipe = by_swipe;
                 dismissed = true;
+                if (reason == ClosedReasons.DISMISSED) {
+                    unowned HcEnrichment ?enrichment = param.hc_enrichment;
+                    if (enrichment != null
+                        && enrichment.token.length > 0
+                        && !enrichment.token_claimed) {
+                        enrichment.token_claimed = true;
+                        HcHoldManager.send_draft_resume (enrichment.token, "dismiss");
+                    }
+                }
                 noti_daemon.request_dismiss_notification (param, reason);
             }
         }
 
         // TODO: Inherit AnimatedListItem instead
         public async void remove_notification (bool animated) {
+            clear_hc_copied_timer ();
             // Disable animation when dismissed by swipe
             animated &= !dismissed_by_swipe && get_mapped ();
             lock (dismissed) {

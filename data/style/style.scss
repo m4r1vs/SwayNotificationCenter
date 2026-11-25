@@ -225,6 +225,40 @@ notificationwindow, blankwindow {
         }
       }
 
+      .hc-enrichment {
+        padding: $margin;
+        border-top: var(--border);
+
+        .hc-context-note {
+          font-size: calc(var(--font-size-body) * 0.92);
+          color: var(--text-color);
+          opacity: 0.85;
+        }
+
+        .hc-draft-entry {
+          background: var(--noti-bg-darker);
+          color: var(--text-color);
+          caret-color: var(--text-color);
+          border: var(--border);
+          border-radius: var(--border-radius);
+          padding: 4px 8px;
+        }
+
+        .hc-draft-actions {
+          .hc-draft-action {
+            background: rgba(var(--noti-bg), var(--noti-bg-alpha));
+            border: var(--border);
+            border-radius: var(--border-radius);
+            color: var(--text-color);
+            padding: 4px 10px;
+
+            &:hover {
+              background: var(--noti-bg-hover);
+            }
+          }
+        }
+      }
+
       .notification-alt-actions {
         background: none;
         border-bottom-left-radius: var(--border-radius);

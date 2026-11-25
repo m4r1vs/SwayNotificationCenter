@@ -444,16 +444,17 @@ namespace SwayNotificationCenter {
     public class Script : NotificationMatching {
         public string ?exec { get; set; default = null; }
         public ScriptRunOnType run_on { get; set; default = ScriptRunOnType.RECEIVE; }
+        public bool skip_on_dnd { get; set; default = false; }
 
         public async bool run_script (NotifyParams param, out string msg) {
             string[] spawn_env = {};
-            spawn_env += "SWAYNC_APP_NAME=%s".printf (param.app_name);
-            spawn_env += "SWAYNC_SUMMARY=%s".printf (param.summary);
-            spawn_env += "SWAYNC_BODY=%s".printf (param.body);
+            spawn_env += "SWAYNC_APP_NAME=%s".printf (param.app_name ?? "");
+            spawn_env += "SWAYNC_SUMMARY=%s".printf (param.summary ?? "");
+            spawn_env += "SWAYNC_BODY=%s".printf (param.body ?? "");
             spawn_env += "SWAYNC_URGENCY=%s".printf (param.urgency.to_string ());
-            spawn_env += "SWAYNC_CATEGORY=%s".printf (param.category);
-            spawn_env += "SWAYNC_SOUND_NAME=%s".printf (param.sound_name);
-            spawn_env += "SWAYNC_SOUND_FILE=%s".printf (param.sound_file);
+            spawn_env += "SWAYNC_CATEGORY=%s".printf (param.category ?? "");
+            spawn_env += "SWAYNC_SOUND_NAME=%s".printf (param.sound_name ?? "");
+            spawn_env += "SWAYNC_SOUND_FILE=%s".printf (param.sound_file ?? "");
             spawn_env += "SWAYNC_ID=%s".printf (param.applied_id.to_string ());
             spawn_env += "SWAYNC_REPLACES_ID=%s".printf (param.replaces_id.to_string ());
             spawn_env += "SWAYNC_TIME=%s".printf (param.time.to_string ());
@@ -766,7 +767,48 @@ namespace SwayNotificationCenter {
 
         /** Show notification if script fails */
         public bool script_fail_notify { get; set; default = true; }
+
+        /** Continue running subsequent matching scripts instead of stopping at first match */
+        public bool script_continue_on_match { get; set; default = false; }
 #endif
+
+        /** Enable hey-computer hold-and-enrich pipeline */
+        public bool hc_hold_enabled { get; set; default = false; }
+
+        /** Maximum hold duration in seconds before fail-open release (1..300) */
+        private const int HC_HOLD_MAX_SECONDS_DEFAULT = 60;
+        private int _hc_hold_max_seconds = HC_HOLD_MAX_SECONDS_DEFAULT;
+        public int hc_hold_max_seconds {
+            get {
+                return _hc_hold_max_seconds;
+            }
+            set {
+                _hc_hold_max_seconds = value.clamp (1, 300);
+            }
+        }
+
+        /** Override UNIX socket path for hey-computer (empty = $XDG_RUNTIME_DIR/hey-computer.sock) */
+        public string hc_hold_socket { get; set; default = ""; }
+
+        /** Case-insensitive regexes matching app_name or desktop_entry to hold (empty = all non-excluded) */
+        public GenericArray<string> hc_hold_apps {
+            get;
+            set;
+            default = new GenericArray<string> ();
+        }
+
+        /** Case-insensitive regexes matching app_name or desktop_entry excluded from holding */
+        public GenericArray<string> hc_hold_exclude_apps {
+            get;
+            set;
+            default = new GenericArray<string> ();
+        }
+
+        /** Whether to also hold low-urgency notifications */
+        public bool hc_hold_low_urgency { get; set; default = false; }
+
+        /** Whether to also hold critical-urgency notifications */
+        public bool hc_hold_critical_urgency { get; set; default = false; }
 
         /** Whether to expand the notification center across both edges of the screen */
         public bool fit_to_screen { get; set; default = true; }
@@ -950,6 +992,15 @@ namespace SwayNotificationCenter {
                                                out status);
                     value = result;
                     return status;
+                case "hc-hold-apps":
+                case "hc-hold-exclude-apps":
+                    bool status;
+                    GenericArray<string> result =
+                        extract_array<string> (property_name,
+                                               property_node,
+                                               out status);
+                    value = result;
+                    return status;
                 case "widget-config":
                     OrderedHashTable<Json.Object> result
                         = new OrderedHashTable<Json.Object> ();
@@ -1024,6 +1075,12 @@ namespace SwayNotificationCenter {
                     break;
 #endif
                 case "widgets":
+                    node = new Json.Node (Json.NodeType.ARRAY);
+                    var table = (GenericArray<string>) value;
+                    node.set_array (serialize_array<string> (table));
+                    break;
+                case "hc-hold-apps":
+                case "hc-hold-exclude-apps":
                     node = new Json.Node (Json.NodeType.ARRAY);
                     var table = (GenericArray<string>) value;
                     node.set_array (serialize_array<string> (table));

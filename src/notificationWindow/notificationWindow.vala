@@ -279,8 +279,7 @@ namespace SwayNotificationCenter {
             // Disable transitions when not mapped
             transition &= get_mapped ();
 
-            if (notification.has_inline_reply) {
-                inline_reply_notifications.remove (param.applied_id);
+            if (inline_reply_notifications.remove (param.applied_id)) {
                 set_keyboard_mode ();
             }
 
@@ -308,7 +307,7 @@ namespace SwayNotificationCenter {
                 ((Gtk.Widget) this).unrealize ();
             }
 
-            if (noti.has_inline_reply) {
+            if (noti.needs_keyboard_input ()) {
                 inline_reply_notifications.add (param.applied_id);
                 // Update the keyboard mode when already mapped
                 if (get_mapped ()) {
@@ -339,6 +338,13 @@ namespace SwayNotificationCenter {
                 notification_ids.set (new_params.applied_id, notification);
 
                 notification.replace_notification (new_params);
+                inline_reply_notifications.remove (id);
+                if (notification.needs_keyboard_input ()) {
+                    inline_reply_notifications.add (new_params.applied_id);
+                }
+                if (get_mapped ()) {
+                    set_keyboard_mode ();
+                }
                 // Position the notification in the beginning/end of the list
                 // and scroll to the new item
                 list.move_to_beginning (notification, true);

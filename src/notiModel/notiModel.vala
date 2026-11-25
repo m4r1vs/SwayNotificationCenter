@@ -129,7 +129,7 @@ namespace SwayNotificationCenter {
          */
         public bool transient { get; private set; }
         /** The urgency level. */
-        public UrgencyLevels urgency { get; private set; }
+        public UrgencyLevels urgency { get; private set; default = UrgencyLevels.NORMAL; }
         /** Replaces the old notification with the same value of:
          * - x-canonical-private-synchronous
          * - synchronous
@@ -167,6 +167,9 @@ namespace SwayNotificationCenter {
         public string display_name { get; private set; }
 
         public NotificationStatusEnum status_state { get; private set; }
+
+        /** Optional hey-computer enrichment attached on hold release */
+        public HcEnrichment ?hc_enrichment { get; set; default = null; }
 
         public NotifyParams (uint32 applied_id,
                              string app_name,
