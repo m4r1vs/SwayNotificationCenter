@@ -553,7 +553,8 @@ namespace SwayNotificationCenter {
             }
 
 #if WANT_SCRIPTING
-            if (param.swaync_no_script) {
+            if (param.swaync_no_script
+                || param.status_state == NotificationStatusEnum.MUTED) {
                 debug ("Skipped scripts for this notification\n");
                 return;
             }
@@ -653,10 +654,12 @@ namespace SwayNotificationCenter {
          */
         [DBus (name = "CloseNotification")]
         public void close_notification (uint32 id) throws DBusError, IOError {
-            uint32 carried_replace_id = 0;
-            if (hc_hold.cancel_held (id, out carried_replace_id)) {
-                debug ("Cancelled held notification ID:%u via CloseNotification", id);
-                NotificationClosed (id, ClosedReasons.CLOSED_BY_CLOSENOTIFICATION);
+            bool cancelled = false;
+            if (hc_hold.on_close_notification (id, out cancelled)) {
+                if (cancelled) {
+                    debug ("Cancelled held notification ID:%u via CloseNotification", id);
+                    NotificationClosed (id, ClosedReasons.CLOSED_BY_CLOSENOTIFICATION);
+                }
                 return;
             }
             request_dismiss_notification_id (id, ClosedReasons.CLOSED_BY_CLOSENOTIFICATION, false);

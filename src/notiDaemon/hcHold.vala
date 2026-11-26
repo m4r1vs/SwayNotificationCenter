@@ -105,6 +105,29 @@ namespace SwayNotificationCenter {
         }
 
         /**
+         * Handles D-Bus CloseNotification while `id` is held for enrichment.
+         * Transient/ephemeral OSD notifications are cancelled immediately;
+         * persistent notifications ignore premature CloseNotification (e.g. from
+         * Electron/Chromium auto-closing or V8 GC) so enrichment can complete.
+         */
+        public bool on_close_notification (uint32 id, out bool cancelled) {
+            HeldEntry ?entry = held_notifications.lookup (id);
+            if (entry == null) {
+                cancelled = false;
+                return false;
+            }
+            if (entry.param.ignore_cc ()) {
+                cancel_entry (entry);
+                cancelled = true;
+                return true;
+            }
+            debug ("Ignoring premature CloseNotification for held persistent notification ID:%u",
+                   id);
+            cancelled = false;
+            return true;
+        }
+
+        /**
          * Tier 1 AI-less deterministic gate.
          * Returns false to bypass immediately at 0 ms with zero socket calls.
          */
