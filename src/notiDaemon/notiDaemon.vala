@@ -2,12 +2,31 @@ namespace SwayNotificationCenter {
     /** Return true to remove notification, false to skip */
     public delegate bool notification_filter_func (Notification notification);
 
+    private class NotificationRecord : Object {
+        public uint32 id;
+        public NotifyParams param;
+        public string state;
+        public int64 closed_time;
+
+        public NotificationRecord (NotifyParams param, string state = "active") {
+            this.id = param.applied_id;
+            this.param = param;
+            this.state = state;
+            this.closed_time = 0;
+        }
+    }
+
     [DBus (name = "org.freedesktop.Notifications")]
     public class NotiDaemon : Object {
+        private const int MAX_HISTORY_RECORDS = 50;
         private uint32 noti_id = 0;
         private HashTable<string, uint32> synchronous_ids =
             new HashTable<string, uint32> (str_hash, str_equal);
         private Gee.HashSet<uint32> notification_ids = new Gee.HashSet<uint32> ();
+        private Gee.HashMap<uint32, NotifyParams> active_params =
+            new Gee.HashMap<uint32, NotifyParams> ();
+        private Gee.ArrayList<NotificationRecord> history_records =
+            new Gee.ArrayList<NotificationRecord> ();
         private HcHoldManager hc_hold;
 
         /** Do Not Disturb state */
@@ -44,6 +63,7 @@ namespace SwayNotificationCenter {
                    id, reason.to_string ());
             NotificationClosed (id, reason);
             notification_ids.remove (id);
+            record_closed (id, reason);
 
             notifications_widget.remove_notification (id);
             floating_notifications.remove_notification (id);
@@ -64,6 +84,7 @@ namespace SwayNotificationCenter {
             foreach (unowned uint32 id in ids) {
                 NotificationClosed (id, reason);
                 notification_ids.remove (id);
+                record_closed (id, reason);
                 floating_notifications.remove_notification (id);
             }
             notifications_widget.remove_group (group_name_id);
@@ -75,8 +96,10 @@ namespace SwayNotificationCenter {
             debug ("Dismissing all notifications, reason:%s", reason.to_string ());
             foreach (uint32 id in notification_ids) {
                 NotificationClosed (id, reason);
+                record_closed (id, reason);
             }
             notification_ids.clear ();
+            active_params.clear ();
 
             remove_all_floating_notifications (false, null);
             notifications_widget.remove_all_notifications (true);
@@ -97,6 +120,7 @@ namespace SwayNotificationCenter {
                                param.applied_id);
                         NotificationClosed (param.applied_id, ClosedReasons.DISMISSED);
                         notification_ids.remove (param.applied_id);
+                        record_closed (param.applied_id, ClosedReasons.DISMISSED);
                     }
                     return true;
                 }
@@ -122,6 +146,213 @@ namespace SwayNotificationCenter {
         /** Activates the `action_index` action of the latest notification */
         internal void invoke_latest_floating_action (uint32 action_index) {
             floating_notifications.latest_notification_action (action_index);
+        }
+
+        internal bool invoke_notification_action_by_id (uint32 id, string action_id) {
+            unowned Notification ?noti = floating_notifications.get_notification (id);
+            if (noti == null) {
+                noti = notifications_widget.get_notification (id);
+            }
+            if (noti == null) {
+                return false;
+            }
+            return noti.invoke_action_by_id (action_id);
+        }
+
+        private void record_delivered (NotifyParams param, uint32 replaced_id) {
+            uint32 id = param.applied_id;
+            if (replaced_id > 0) {
+                active_params.unset (replaced_id);
+                for (int i = history_records.size - 1; i >= 0; i--) {
+                    if (history_records[i].id == replaced_id) {
+                        history_records.remove_at (i);
+                    }
+                }
+            }
+            for (int i = history_records.size - 1; i >= 0; i--) {
+                if (history_records[i].id == id) {
+                    history_records.remove_at (i);
+                }
+            }
+            active_params.set (id, param);
+            history_records.add (new NotificationRecord (param, "active"));
+            while (history_records.size > MAX_HISTORY_RECORDS) {
+                history_records.remove_at (0);
+            }
+        }
+
+        private void record_closed (uint32 id, ClosedReasons reason) {
+            active_params.unset (id);
+            string new_state = (reason == ClosedReasons.EXPIRED) ? "expired" : "dismissed";
+            int64 closed_at = (int64) (get_real_time () / 1000000);
+            foreach (NotificationRecord rec in history_records) {
+                if (rec.id == id) {
+                    rec.state = new_state;
+                    rec.closed_time = closed_at;
+                }
+            }
+        }
+
+        private static bool is_self_or_osd (NotifyParams param) {
+            if (param.hints != null && HcHoldManager.is_hint_truthy (param.hints, "x-hey-computer")) {
+                return true;
+            }
+            if (param.transient && (param.has_synch
+                                    || (param.hints != null && param.hints.contains ("value")))) {
+                return true;
+            }
+            string app = (param.app_name ?? "").strip ().down ();
+            string desktop = (param.desktop_entry ?? "").strip ().down ();
+            string desktop_stem = desktop.has_suffix (".desktop")
+                ? desktop.slice (0, desktop.length - 8)
+                : desktop;
+            if (app == "hey-computer"
+                || app == "hey-computer-viewer"
+                || app == "npu-dictate"
+                || app == "volume-change-notify"
+                || app == "brightness-change-notify"
+                || desktop_stem == "hey-computer"
+                || desktop_stem == "hey-computer-viewer"
+                || desktop_stem == "npu-dictate") {
+                return true;
+            }
+            return false;
+        }
+
+        private void write_notification_record_json (Json.Builder builder,
+                                                     NotificationRecord rec) {
+            unowned NotifyParams p = rec.param;
+            bool is_active = rec.state == "active";
+            bool is_floating = is_active && floating_notifications.get_notification (rec.id) != null;
+            bool in_cc = is_active && notifications_widget.get_notification (rec.id) != null;
+
+            builder.begin_object ();
+            builder.set_member_name ("id");
+            builder.add_int_value ((int64) rec.id);
+            builder.set_member_name ("app_name");
+            builder.add_string_value (p.app_name ?? "");
+            builder.set_member_name ("desktop_entry");
+            builder.add_string_value (p.desktop_entry ?? "");
+            builder.set_member_name ("display_name");
+            builder.add_string_value (p.display_name ?? "");
+            builder.set_member_name ("summary");
+            builder.add_string_value (p.summary ?? "");
+            builder.set_member_name ("body");
+            builder.add_string_value (p.body ?? "");
+            builder.set_member_name ("category");
+            builder.add_string_value (p.category ?? "");
+            builder.set_member_name ("urgency");
+            builder.add_string_value (p.urgency.to_string ());
+            builder.set_member_name ("time");
+            builder.add_int_value (p.time);
+            if (rec.closed_time > 0) {
+                builder.set_member_name ("closed_time");
+                builder.add_int_value (rec.closed_time);
+            }
+            builder.set_member_name ("state");
+            builder.add_string_value (rec.state);
+            builder.set_member_name ("floating");
+            builder.add_boolean_value (is_floating);
+            builder.set_member_name ("in_control_center");
+            builder.add_boolean_value (in_cc);
+            builder.set_member_name ("transient");
+            builder.add_boolean_value (p.transient);
+            builder.set_member_name ("resident");
+            builder.add_boolean_value (p.resident);
+            builder.set_member_name ("default_action");
+            builder.add_boolean_value (p.default_action != null);
+            builder.set_member_name ("inline_reply");
+            builder.add_boolean_value (p.inline_reply != null);
+
+            builder.set_member_name ("actions");
+            builder.begin_array ();
+            if (p.actions != null) {
+                for (uint i = 0; i < p.actions.length; i++) {
+                    unowned Action act = p.actions.index (i);
+                    builder.begin_object ();
+                    builder.set_member_name ("id");
+                    builder.add_string_value (act.identifier ?? "");
+                    builder.set_member_name ("label");
+                    builder.add_string_value (act.text ?? "");
+                    builder.end_object ();
+                }
+            }
+            builder.end_array ();
+
+            if (p.hc_enrichment != null) {
+                unowned HcEnrichment hc = p.hc_enrichment;
+                builder.set_member_name ("hc_enrichment");
+                builder.begin_object ();
+                builder.set_member_name ("turn_id");
+                builder.add_int_value (hc.turn_id);
+                builder.set_member_name ("context_note");
+                builder.add_string_value (hc.context_note ?? "");
+                builder.set_member_name ("draft_text");
+                builder.add_string_value (hc.draft_text ?? "");
+                builder.set_member_name ("readonly");
+                builder.add_boolean_value (hc.readonly_mode);
+                builder.end_object ();
+            }
+
+            builder.end_object ();
+        }
+
+        internal string get_notifications_json (bool include_history,
+                                                bool include_all,
+                                                uint32 limit,
+                                                bool latest_only) {
+            var candidates = new Gee.ArrayList<NotificationRecord> ();
+            foreach (NotifyParams p in active_params.values) {
+                if (include_all || !is_self_or_osd (p)) {
+                    candidates.add (new NotificationRecord (p, "active"));
+                }
+            }
+
+            if (include_history || (latest_only && candidates.is_empty)) {
+                foreach (NotificationRecord rec in history_records) {
+                    if (!active_params.has_key (rec.id)
+                        && (include_all || !is_self_or_osd (rec.param))) {
+                        candidates.add (rec);
+                    }
+                }
+            }
+
+            candidates.sort ((a, b) => {
+                if (a.param.time != b.param.time) {
+                    return (a.param.time > b.param.time) ? -1 : 1;
+                }
+                if (a.id != b.id) {
+                    return (a.id > b.id) ? -1 : 1;
+                }
+                return 0;
+            });
+
+            if (latest_only) {
+                if (candidates.is_empty) {
+                    return "null";
+                }
+                var single_builder = new Json.Builder ();
+                write_notification_record_json (single_builder, candidates[0]);
+                var single_gen = new Json.Generator ();
+                single_gen.pretty = false;
+                single_gen.set_root (single_builder.get_root ());
+                return single_gen.to_data (null);
+            }
+
+            var arr_builder = new Json.Builder ();
+            arr_builder.begin_array ();
+            int max_items = (limit > 0 && limit < candidates.size)
+                ? (int) limit
+                : candidates.size;
+            for (int i = 0; i < max_items; i++) {
+                write_notification_record_json (arr_builder, candidates[i]);
+            }
+            arr_builder.end_array ();
+
+            var arr_gen = new Json.Generator ();
+            arr_gen.pretty = false;
+            arr_gen.set_root (arr_builder.get_root ());
+            return arr_gen.to_data (null);
         }
 
         /*
@@ -309,9 +540,13 @@ namespace SwayNotificationCenter {
             if (added || removed) {
                 if (notification_id_to_replace > 0) {
                     notification_ids.remove (notification_id_to_replace);
+                    if (!added) {
+                        record_closed (notification_id_to_replace, ClosedReasons.DISMISSED);
+                    }
                 }
                 if (added) {
                     notification_ids.add (id);
+                    record_delivered (param, notification_id_to_replace);
                 }
 
                 swaync_daemon.emit_subscribe ();

@@ -523,6 +523,26 @@ namespace SwayNotificationCenter {
             action_clicked (param.default_action);
         }
 
+        public bool invoke_action_by_id (string action_id) {
+            if (action_id == "" || action_id == "default") {
+                if (param.default_action == null) {
+                    return false;
+                }
+                click_default_action ();
+                return true;
+            }
+            if (param.actions != null) {
+                for (uint i = 0; i < param.actions.length; i++) {
+                    unowned Action act = param.actions.index (i);
+                    if (act.identifier == action_id) {
+                        action_clicked (act);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         public void click_alt_action (uint index) {
             if (!alt_actions_box.visible) {
                 return;

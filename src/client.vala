@@ -17,6 +17,8 @@ interface CcDaemon : Object {
 
     public abstract void close_all_notifications () throws DBusError, IOError;
 
+    public abstract void close_notification (uint32 id) throws DBusError, IOError;
+
     public abstract uint notification_count () throws DBusError, IOError;
 
     public abstract bool get_dnd () throws DBusError, IOError;
@@ -32,6 +34,15 @@ interface CcDaemon : Object {
     public abstract void set_visibility (bool value) throws DBusError, IOError;
 
     public abstract void latest_invoke_action (uint32 action_index) throws DBusError, IOError;
+
+    public abstract string get_notifications_json (bool include_history,
+                                                   bool include_all,
+                                                   uint32 limit,
+                                                   bool latest_only) throws DBusError, IOError;
+
+    public abstract bool invoke_notification_action_by_id (uint32 id,
+                                                           string action_id)
+    throws DBusError, IOError;
 
     public abstract bool set_cc_monitor (string monitor) throws DBusError, IOError;
     public abstract bool set_noti_window_monitor (string monitor) throws DBusError, IOError;
@@ -72,13 +83,20 @@ private void print_help (string[] args) {
     print ("  -Ir, \t --inhibitor-remove [APP_ID] \t Remove an inhibitor\n");
     print ("  -Ic, \t --inhibitors-clear \t\t Clears all inhibitors\n");
     print ("  -c, \t --count \t\t\t Print the current notification count\n");
+    print ("  -l, \t --list-notifications \t\t Print active notifications as JSON\n");
+    print ("  -ln,\t --latest-notification \t\t Print the latest notification as JSON\n");
+    print ("      \t --history [LIMIT] \t\t Print active and recent notifications as JSON\n");
+    print ("      \t --all \t\t\t\t Include self/OSD popups in notification JSON queries\n");
     print (
         "      \t --hide-latest \t\t\t Hides latest notification. Still shown in Control Center\n");
     print ("      \t --hide-all \t\t\t Hides all notifications. Still shown in Control Center\n");
     print ("      \t --close-latest \t\t Closes latest notification\n");
+    print ("      \t --close-id <ID> \t\t Closes notification with <ID>\n");
     print ("  -C, \t --close-all \t\t\t Closes all notifications\n");
     print ("  -a, \t --action [ACTION_INDEX]\t " +
            "Invokes the action [ACTION_INDEX] of the latest notification\n");
+    print ("      \t --action-id <ID> [ACTION_ID]\t " +
+           "Invokes [ACTION_ID] (default: \"default\") on notification <ID>\n");
     print ("  -sw, \t --skip-wait \t\t\t Doesn't wait when swaync hasn't been started\n");
     print ("  -s, \t --subscribe \t\t\t Subscribe to notification add and close events\n");
     print ("  -swb,  --subscribe-waybar \t\t Subscribe to notification add and close events "
@@ -134,7 +152,7 @@ private void print_subscribe_waybar () {
     }
 }
 
-public int command_line (ref string[] args, bool skip_wait) {
+public int command_line (ref string[] args, bool skip_wait, bool include_all) {
     // Used to know how many args the current command consumed
     int used_args = 1;
     try {
@@ -164,8 +182,44 @@ public int command_line (ref string[] args, bool skip_wait) {
             case "-c":
                 print (cc_daemon.notification_count ().to_string ());
                 break;
+            case "--list-notifications":
+            case "-l":
+                print ("%s\n", cc_daemon.get_notifications_json (false, include_all, 0, false));
+                break;
+            case "--latest-notification":
+            case "-ln":
+                print ("%s\n", cc_daemon.get_notifications_json (false, include_all, 1, true));
+                break;
+            case "--history":
+                uint32 limit = 20;
+                if (args.length >= 2 && !args[1].has_prefix ("-")) {
+                    uint64 parsed = 0;
+                    if (!uint64.try_parse (args[1], out parsed) || parsed > uint32.MAX) {
+                        stderr.printf ("Invalid history limit: \"%s\"\n", args[1]);
+                        Process.exit (1);
+                    }
+                    used_args++;
+                    limit = (uint32) parsed;
+                }
+                print ("%s\n", cc_daemon.get_notifications_json (true, include_all, limit, false));
+                break;
             case "--close-latest":
                 cc_daemon.hide_latest_notifications (true);
+                break;
+            case "--close-id":
+                if (args.length < 2) {
+                    stderr.printf ("Notification ID needed!\n");
+                    Process.exit (1);
+                }
+                uint64 close_id = 0;
+                if (!uint64.try_parse (args[1], out close_id)
+                    || close_id == 0
+                    || close_id > uint32.MAX) {
+                    stderr.printf ("Invalid notification ID: \"%s\"\n", args[1]);
+                    Process.exit (1);
+                }
+                used_args++;
+                cc_daemon.close_notification ((uint32) close_id);
                 break;
             case "--hide-latest":
                 cc_daemon.hide_latest_notifications (false);
@@ -215,6 +269,30 @@ public int command_line (ref string[] args, bool skip_wait) {
                     action_index = int.parse (args[1]);
                 }
                 cc_daemon.latest_invoke_action ((uint32) action_index);
+                break;
+            case "--action-id":
+                if (args.length < 2) {
+                    stderr.printf ("Notification ID needed!\n");
+                    Process.exit (1);
+                }
+                uint64 act_noti_id = 0;
+                if (!uint64.try_parse (args[1], out act_noti_id)
+                    || act_noti_id == 0
+                    || act_noti_id > uint32.MAX) {
+                    stderr.printf ("Invalid notification ID: \"%s\"\n", args[1]);
+                    Process.exit (1);
+                }
+                used_args++;
+                string action_id = "default";
+                if (args.length >= 3 && !args[2].has_prefix ("-")) {
+                    used_args++;
+                    action_id = args[2];
+                }
+                if (!cc_daemon.invoke_notification_action_by_id ((uint32) act_noti_id, action_id)) {
+                    stderr.printf ("Could not invoke action \"%s\" on notification ID %u\n",
+                                   action_id, (uint32) act_noti_id);
+                    Process.exit (1);
+                }
                 break;
             case "--get-inhibited":
             case "-I":
@@ -341,9 +419,10 @@ int try_connect (owned string[] args) {
             "/org/erikreider/swaync/cc");
 
         bool skip_wait = "--skip-wait" in args || "-sw" in args;
+        bool include_all = "--all" in args;
         bool one_arg = true;
         while (args.length > 0) {
-            if (args[0] == "--skip-wait" || args[0] == "-sw") {
+            if (args[0] == "--skip-wait" || args[0] == "-sw" || args[0] == "--all") {
                 args = args[1 :];
                 continue;
             }
@@ -351,7 +430,7 @@ int try_connect (owned string[] args) {
                 // Separate each command output
                 print ("\n");
             }
-            if (command_line (ref args, skip_wait) == 1) {
+            if (command_line (ref args, skip_wait, include_all) == 1) {
                 print_connection_error ();
                 return 1;
             }

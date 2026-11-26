@@ -108,6 +108,14 @@ namespace SwayNotificationCenter.Widgets {
             return n_notifications == 0;
         }
 
+        public unowned Notification ?get_notification (uint32 id) {
+            unowned NotificationGroup ?group = noti_groups_id.get (id);
+            if (group == null || group.dismissed) {
+                return null;
+            }
+            return group.get_notification (id);
+        }
+
         public void request_dismiss_all_notifications () {
             noti_daemon.request_dismiss_all_notifications (ClosedReasons.DISMISSED);
         }

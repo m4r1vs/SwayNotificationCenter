@@ -50,18 +50,21 @@ public class XdgActivationHelper : Object {
 
         unowned Wl.Display wl_display = Functions.get_wl_display ();
         unowned Gtk.Root ?root = widget.get_root ();
-        if (root == null) {
-            warning ("GDK Window is null");
-            return null;
-        }
-        unowned Wl.Surface wl_surface = Functions.get_wl_surface (root.get_surface ());
 
         Value token_value = Value (typeof (string));
         token_value.set_string (null);
 
         Token *token = xdg_activation->get_activation_token ();
         token->add_listener (TOKEN_LISTENER, &token_value);
-        token->set_surface (wl_surface);
+        if (root != null) {
+            unowned Gdk.Surface ?gdk_surface = root.get_surface ();
+            if (gdk_surface != null) {
+                unowned Wl.Surface ?wl_surface = Functions.get_wl_surface (gdk_surface);
+                if (wl_surface != null) {
+                    token->set_surface (wl_surface);
+                }
+            }
+        }
         token->commit ();
         while (wl_display.dispatch () >= 0 && token_value.get_string () == null) {
             // noop

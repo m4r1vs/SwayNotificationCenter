@@ -154,6 +154,21 @@ namespace SwayNotificationCenter {
             noti_daemon.invoke_latest_floating_action (action_index);
         }
 
+        /** Returns active (and optionally recent historical) notifications as JSON */
+        public string get_notifications_json (bool include_history,
+                                              bool include_all,
+                                              uint32 limit,
+                                              bool latest_only) throws DBusError, IOError {
+            return noti_daemon.get_notifications_json (
+                include_history, include_all, limit, latest_only);
+        }
+
+        /** Invokes an action (e.g. "default" or an action identifier) on a notification by ID */
+        public bool invoke_notification_action_by_id (uint32 id, string action_id)
+        throws DBusError, IOError {
+            return noti_daemon.invoke_notification_action_by_id (id, action_id);
+        }
+
         /**
          * Adds an inhibitor with the Application ID
          * (ex: "org.erikreider.swaysettings", "swayidle", etc...).

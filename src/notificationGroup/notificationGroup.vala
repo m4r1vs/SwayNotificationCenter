@@ -293,6 +293,10 @@ namespace SwayNotificationCenter {
             }
         }
 
+        public unowned Notification ?get_notification (uint32 id) {
+            return find_notification (id);
+        }
+
         private unowned Notification ?find_notification (uint32 id) {
             unowned Notification ?notification = notification_ids.get (id);
             if (notification == null || notification.param.applied_id != id) {

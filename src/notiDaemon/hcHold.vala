@@ -493,7 +493,7 @@ namespace SwayNotificationCenter {
             }
         }
 
-        private static bool is_hint_truthy (HashTable<string, Variant> hints, string key) {
+        internal static bool is_hint_truthy (HashTable<string, Variant> hints, string key) {
             Variant ?v = hints.lookup (key);
             if (v == null) {
                 return false;

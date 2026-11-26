@@ -61,6 +61,18 @@ swaync-client - Client executable
 *-c, --count*
 	Print the current notification count
 
+*-l, --list-notifications*
+	Print active notifications as a JSON array (newest first; excludes self/OSD popups unless *--all* is given)
+
+*-ln, --latest-notification*
+	Print the newest notification as a JSON object (falls back to recent history if no active notifications exist; prints *null* when none)
+
+*--history [LIMIT]*
+	Print active and recently dismissed/expired notifications (default limit 20) as a JSON array
+
+*--all*
+	Include self-originated assistant popups and transient OSD sliders in notification JSON queries
+
 *--hide-latest*
 	Hides latest notification. Still shown in Control Center
 
@@ -70,11 +82,17 @@ swaync-client - Client executable
 *--close-latest*
 	Closes latest notification
 
+*--close-id <ID>*
+	Closes a specific notification by ID
+
 *-C, --close-all*
 	Closes all notifications
 
 *-a, --action [ACTION_INDEX]*
 	Invokes the action [ACTION_INDEX] (or 0) of the latest notification
+
+*--action-id <ID> [ACTION_ID]*
+	Invokes [ACTION_ID] (defaults to *default*) on the notification with <ID>
 
 *-sw, --skip-wait*
 	Doesn't wait when swaync hasn't been started
